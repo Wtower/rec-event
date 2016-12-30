@@ -1,0 +1,236 @@
+<?php
+/**
+ * @file
+ *   Installation functions
+ * 
+ * @author
+ *   gkarak@forecasting.gr
+ *
+ * @copyright
+ *   (c) 2014 George Karakostas
+ * 
+ * @license
+ *   GPLv2
+ */
+
+/**
+ * Implements hook_schema()
+ */
+function rec_event_schema() {
+  $schema = array();
+  /*
+   * Event table
+   */
+  $schema['rec_event'] = array(
+    'description' => 'Events master table.',
+    'fields' => array(
+      /*
+       * Main fields
+       */
+      'event_id' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Primary key for events',
+      ),
+      'type' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'description' => 'Bundle',
+      ),
+      'title' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'description' => 'Name of event',
+      ),
+      'description' => array(
+        'type' => 'text',
+        'description' => 'Event description',
+      ),
+      // Types: none, daily, weekly, monthly, yearly
+      'recurrence_type' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Type of event recurrence',
+      ),
+      /*
+       *  Recurrence optional variables
+       */
+      'recurrence_subtype' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Subtype of event recurrence',
+      ),
+      // Serialized PHP array of Drupal select box with days
+      'recurrence_weekly_days' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'description' => 'Recurrence: which days of week',
+      ),
+      'recurrence_daily_every' => array(
+        'type' => 'int',
+        'description' => 'Recurrence: every how many days',
+      ),
+      'recurrence_weekly_every' => array(
+        'type' => 'int',
+        'description' => 'Recurrence: every how many weeks',
+      ),
+      'recurrence_monthly_every' => array(
+        'type' => 'int',
+        'description' => 'Recurrence: every how many months',
+      ),
+      'recurrence_at_date' => array(
+        'type' => 'int',
+        'description' => 'Recurrence: at which date',
+      ),
+      'recurrence_at_week' => array(
+        'type' => 'int',
+        'description' => 'Recurrence: at which week',
+      ),
+      'recurrence_at_month' => array(
+        'type' => 'int',
+        'description' => 'Recurrence: at which month',
+      ),
+      'recurrence_max_date' => array(
+        'type' => 'int',
+        'description' => 'Recurrence: last date of recurrence',
+      ),
+      'recurrence_max_occ' => array(
+        'type' => 'int',
+        'description' => 'Recurrence: maximum number of occurences',
+      ),
+      /*
+       * Meta fields
+       */
+      // 0: new, 1: exception, 2: edit next, 3: edit all
+      'recurrence_edit_status' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Whether this event is an exception to the recurrence rule',
+      ),
+      'parent_event_id' => array(
+        'type' => 'int',
+        'description' => 'Recurring Event ID that created this event',
+      ),
+      'ref_event_id' => array(
+        'type' => 'int',
+        'description' => 'Reference to Event ID',
+      ),
+      'revision' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => -1,
+        'description' => 'Revision number',
+      ),
+      'created_uid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'description' => 'User ID that created the event',
+      ),
+      'modified_uid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'description' => 'User ID that modified the event',
+      ),
+      'created_date' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The Unix timestamp when the event was created',
+      ),
+      'modified_date' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The Unix timestamp when the event was modified',
+      ),
+    ),
+    'primary key' => array('event_id'),
+  );
+  /*
+   * Event type table
+   */
+  $schema['rec_event_type'] = array(
+    'description' => 'Stores information about all defined event types.',
+    'fields' => array(
+      'id' => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique event type ID.',
+      ),
+      'type' => array(
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE,
+        'description' => 'The machine-readable name of this type.',
+      ),
+      'label' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'The human-readable name of this type.',
+      ),
+      'description' => array(
+        'type' => 'text',
+        'not null' => TRUE,
+        'size' => 'medium',
+        'translatable' => TRUE,
+        'description' => 'A brief description of this type.',
+      ),
+      'state' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'State of event types.',
+      ),
+      'last_repop_date' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The Unix timestamp when recurring events have been last repopulated.',
+      ),
+    ) + entity_exportable_schema_fields(),
+    'primary key' => array('id'),
+    'unique keys' => array(
+      'type' => array('type'),
+    ),
+  );
+  return $schema;
+}
+
+/**
+ * Implements hook_install()
+ * 
+ * Add Field API fields.
+ * Runs after hook_schema().
+ * 
+ * @see https://api.drupal.org/api/drupal/modules%21system%21system.api.php/function/hook_install/7
+ */
+function rec_event_install() {
+  rec_event_create_fields();
+}
+
+/**
+ * Implements hook_uninstall()
+ * 
+ * Remove Field API fields instances.
+ * 
+ * This is the best working way so far. Leaves an old record in 
+ * field_config_instance flagged as deleted forever and 2 tables 
+ * field_deleted_data_7 (id) and field_deleted_revision_7.
+ * 
+ * @see http://drupal.stackexchange.com/questions/109454/proper-way-to-delete-field-on-module-uninstall
+ */
+function rec_event_uninstall() {
+  // .module funcitons are not available at this point 
+  $bundles = db_query("SELECT type FROM rec_event_type")->fetchCol();
+  foreach ($bundles as $bundle) {
+    field_attach_delete_bundle('rec_event', $bundle);
+  }
+}

@@ -1,0 +1,14 @@
+name = Recurring Event
+description = Defines the Recurring Event entity.
+;package = 
+core = 7.x
+version = 7.x-1.x-dev-16
+
+configure = admin/structure/event-types
+
+dependencies[] = entity
+dependencies[] = views
+dependencies[] = date
+;dependencies[] = fullcalendar
+
+files[] = rec_event_controller.inc

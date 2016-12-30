@@ -1,0 +1,935 @@
+<?php
+/**
+ * @file
+ *   Recurring Event module file
+ * 
+ * @author
+ *   gkarak@forecasting.gr
+ *   
+ * @copyright
+ *   (c) 2014 George Karakostas
+ * 
+ * @license
+ *   GPLv2
+ * 
+ * @var
+ * {module_name} Recurring Event
+ * {entity_name} Event
+ * {package} 
+ * {module} rec_event
+ * {module_short} event
+ * {class_name} RecEvent
+ * 
+ * @abstract
+ *   The module is an event entity. It features single as well as reccurring events. 
+ *   It uses a Date field to store the date and optionally an Entity reference.
+ *   It uses FullCalendar module to display a calendar of all events.
+ */
+
+/**
+ * Implements hook_help.
+
+ * @param $path
+ * @param $arg
+ */
+function rec_event_help($path, $arg) {
+  switch ($path) {
+    case 'admin/help#rec_event':
+      return '<p>'.  
+        t('Provides a Recurring Event entity.') .
+        '</p>';
+      break;
+  }
+}
+
+/**
+ * Implements hook_entity_info()
+ * 
+ * @see https://api.drupal.org/api/drupal/modules%21system%21system.api.php/function/hook_entity_info/7
+ */
+function rec_event_entity_info() {
+  $info = array();
+  $info['rec_event'] = array(
+    'label' => t('Recurring Event'),
+    'entity class' => 'RecEvent',
+    'controller class' => 'RecEventController',
+    'base table' => 'rec_event',
+    'fieldable' => TRUE,
+    'entity keys' => array(
+      'id' => 'event_id',
+      'bundle' => 'type',
+    ),
+    'bundle keys' => array(
+      'bundle' => 'type',
+    ),
+    'bundles' => array(),
+    'load hook' => 'rec_event_load',
+    'view modes' => array(
+      'full' => array(
+        'label' => t('Default'),
+        'custom settings' => FALSE,
+      ),
+    ),
+    'label callback' => 'entity_class_label',
+    'uri callback' => 'entity_class_uri',
+    'module' => 'rec_event',
+    //'creation callback' => 'model_create',
+    'access callback' => 'rec_event_access',
+  );
+  $info['rec_event_type'] = array(
+    'label' => t('Recurring Event Type'),
+    'entity class' => 'RecEventType',
+    'controller class' => 'RecEventTypeController',
+    'base table' => 'rec_event_type',
+    'fieldable' => FALSE,
+    'bundle of' => 'rec_event',
+    'exportable' => TRUE,
+    'entity keys' => array(
+      'id' => 'id',
+      'name' => 'type',
+      'label' => 'label',
+    ),
+    'module' => 'rec_event',
+    // Enable the entity API's admin UI.
+    'admin ui' => array(
+      'path' => 'admin/structure/event-types',
+      'file' => 'rec_event_admin.inc',
+      'controller class' => 'RecEventTypeUIController',
+    ),
+    'access callback' => 'rec_event_type_access',
+  );
+  return $info;
+}
+
+/**
+ * Implements hook_entity_info_alter()
+ */
+function rec_event_entity_info_alter(&$entity_info) {
+  foreach (rec_event_types() as $type => $info) {
+    $entity_info['rec_event']['bundles'][$type] = array(
+      'label' => $info->label,
+      'admin' => array(
+        'path' => 'admin/structure/event-types/manage/%rec_event_type',
+        'real path' => 'admin/structure/event-types/manage/' . $type,
+        'bundle argument' => 4,
+      ),
+    );
+  }
+}
+
+/**
+ * Implements hook_menu()
+ */
+function rec_event_menu() {
+  $items = array();
+  // presents a page to select bundle
+  $items['event/add'] = array(
+    'title' => 'Add event',
+    'page callback' => 'rec_event_admin_add_page',
+    'access arguments' => array('create rec_event entities'),
+    'file' => 'rec_event_admin.inc',
+    'type' => MENU_LOCAL_ACTION,
+    'tab_parent' => 'event',
+    'tab_root' => 'event',
+  );
+  $items['event/publish'] = array(
+    'title' => 'Publish calendar',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('rec_event_publish_form'),
+    //'access callback' => 'entity_access',
+    'access arguments' => array('administer rec_event entities'),
+    'file' => 'rec_event_admin.inc',
+    'type' => MENU_LOCAL_ACTION,
+    'tab_parent' => 'event',
+    'tab_root' => 'event',
+  );
+  // use a variable for future code management
+  $uri = 'event/%rec_event';
+  $uri_pos = 1;
+  $items[$uri] = array(
+    'title callback' => 'entity_label',
+    'title arguments' => array('rec_event', $uri_pos),
+    'page callback' => 'rec_event_view',
+    'page arguments' => array($uri_pos),
+    'access callback' => 'entity_access',
+    'access arguments' => array('view', 'rec_event', $uri_pos),
+    'file' => 'rec_event_pages.inc',
+  );
+  $items[$uri . '/view'] = array(
+    'title' => 'View',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -10,
+  );
+  $items[$uri . '/delete'] = array(
+    'title' => 'Delete event',
+    'title callback' => 'rec_event_label',
+    'title arguments' => array($uri_pos),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('rec_event_delete_form', $uri_pos),
+    'access callback' => 'entity_access',
+    'access arguments' => array('edit', 'rec_event', $uri_pos),
+    'file' => 'rec_event_admin.inc',
+  );
+  $items[$uri . '/edit'] = array(
+    'title' => 'Edit',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('rec_event_form', $uri_pos),
+    'access callback' => 'entity_access',
+    'access arguments' => array('edit', 'rec_event', $uri_pos),
+    'file' => 'rec_event_admin.inc',
+    'type' => MENU_LOCAL_TASK,
+    'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+  );
+  foreach (rec_event_types() as $type => $info) {
+    $items['event/add/' . $type] = array(
+      'title' => 'Add event',
+      'page callback' => 'rec_event_add',
+      'page arguments' => array(2),
+      'access callback' => 'entity_access',
+      'access arguments' => array('create', 'rec_event', $type),
+      'file' => 'rec_event_admin.inc',
+    );
+  }
+  // remaining ops taken care by admin ui in entity info
+  $items['admin/structure/event-types/%rec_event_type/delete'] = array(
+    'title' => 'Delete',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('rec_event_type_form_delete_confirm', 4),
+    'access arguments' => array('administer rec_event types'),
+    'weight' => 1,
+    'type' => MENU_NORMAL_ITEM,
+    'file' => 'rec_event_admin.inc',
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_permission()
+ * 
+ * Permissions (from example_task project)
+ * - Administer entity types
+ * - Create entities
+ * - View entities
+ * - Edit any entity
+ * - Edit own entity
+ * This project has residual from Model project using administer entities (fixed).
+ * Model project permissions are different.
+ * @see http://www.trellon.com/content/blog/creating-own-entities-entity-api#comment-8942
+ * 
+ * @todo generate permissions per type
+ * @see project model
+ */
+function rec_event_permission() {
+  $permissions = array(
+    'administer rec_event types' => array(
+      'title' => t('Administer event types'),
+      'description' => t('Allows users to configure event types and their fields.'),
+      'restrict access' => TRUE,
+    ),
+    'create rec_event entities' => array(
+      'title' => t('Create events'),
+      'description' => t('Allows users to create events.'),
+    ),
+    'view rec_event entities' => array(
+      'title' => t('View events'),
+      'description' => t('Allows users to view events.'),
+    ),
+    'edit any rec_event entities' => array(
+      'title' => t('Edit any events'),
+      'description' => t('Allows users to edit any events.'),
+    ),
+    'edit own rec_event entities' => array(
+      'title' => t('Edit own events'),
+      'description' => t('Allows users to edit own events.'),
+    ),
+  );
+  return $permissions;
+}
+
+/**
+ * Implements hook_entity_property_info_alter()
+ * 
+ * Here define mostly the fields that require a relationship or date fields
+ * But you can describe each field in detail (useful for Views etc).
+ * Setter callback is required for VBO
+ * 
+ * @see http://drupalcontrib.org/api/drupal/contributions%21entity%21entity.api.php/function/hook_entity_property_info/7
+ */
+function rec_event_entity_property_info_alter(&$info) {
+  $properties = &$info['rec_event']['properties'];
+  $properties['title'] = array(
+    'label' => t('Title'),
+    'type' => 'text',
+    'description' => t('The event title.'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'required' => TRUE,
+    'schema field' => 'title',
+  );
+  $properties['description'] = array(
+    'label' => t('Description'),
+    'type' => 'text',
+    'description' => t('The event description.'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'description',
+  );
+  $properties['recurrence_type'] = array(
+    'label' => t('Recurrence Type'),
+    'type' => 'integer',
+    'description' => t('Type of event recurrence [0: none, 1: daily, 2: weekly, 3: monthly, 4: yearly].'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_type',
+  );
+  $properties['recurrence_subtype'] = array(
+    'label' => t('Recurrence Subtype'),
+    'type' => 'integer',
+    'description' => t('Subtype of event recurrence'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_subtype',
+  );
+  $properties['recurrence_weekly_days'] = array(
+    'label' => t('Recurrence weekly days'),
+    'type' => 'text',
+    'description' => t('Recurrence: which days of week'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_weekly_days',
+  );
+  $properties['recurrence_daily_every'] = array(
+    'label' => t('Recurrence daily every'),
+    'type' => 'integer',
+    'description' => t('Recurrence: every how many days'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_daily_every',
+  );
+  $properties['recurrence_weekly_every'] = array(
+    'label' => t('Recurrence weekly every'),
+    'type' => 'integer',
+    'description' => t('Recurrence: every how many weeks'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_weekly_every',
+  );
+  $properties['recurrence_monthly_every'] = array(
+    'label' => t('Recurrence monthly every'),
+    'type' => 'integer',
+    'description' => t('Recurrence: every how many months'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_monthly_every',
+  );
+  $properties['recurrence_at_date'] = array(
+    'label' => t('Recurrence at date'),
+    'type' => 'integer',
+    'description' => t('Recurrence: at which date'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_at_date',
+  );
+  $properties['recurrence_at_week'] = array(
+    'label' => t('Recurrence at week'),
+    'type' => 'integer',
+    'description' => t('Recurrence: at which week'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_at_week',
+  );
+  $properties['recurrence_at_month'] = array(
+    'label' => t('Recurrence at month'),
+    'type' => 'integer',
+    'description' => t('Recurrence: at which month'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_at_month',
+  );
+  $properties['recurrence_max_date'] = array(
+    'label' => t('Recurrence maximum date'),
+    'type' => 'date',
+    'description' => t('Recurrence: last date of recurrence'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_max_date',
+  );
+  $properties['recurrence_max_occ'] = array(
+    'label' => t('Recurrence maximum occurences'),
+    'type' => 'integer',
+    'description' => t('Maximum number of recurrence occurences for the event.'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_max_occ',
+  );
+  $properties['recurrence_edit_status'] = array(
+    'label' => t('Recurrence edit status'),
+    'type' => 'integer',
+    'description' => t('Whether this event is an exception to the recurrence rule [0: new, 1: exception, 2: edit next, 3: edit all].'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'recurrence_edit_status',
+  );
+  $properties['parent_event_id'] = array(
+    'label' => t('Parent Event ID'),
+    'type' => 'integer',
+    'description' => t('Recurring Event ID that created this event'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'parent_event_id',
+  );
+  $properties['ref_event_id'] = array(
+    'label' => t('Ref Event ID'),
+    'type' => 'integer',
+    'description' => t('Reference to Event ID'),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'edit any rec_event entities',
+    'schema field' => 'ref_event_id',
+  );
+  $properties['revision'] = array(
+    'label' => t('revision'),
+    'type' => 'integer',
+    'description' => t('Revision number'),
+    'schema field' => 'revision',
+  );
+  $properties['created_uid'] = array(
+    'label' => t('Author'),
+    'type' => 'user',
+    'description' => t('The author of the event.'),
+    'schema field' => 'created_uid',
+  );
+  $properties['modified_uid'] = array(
+    'label' => t('Modifier'),
+    'type' => 'user',
+    'description' => t('The user who modified the event.'),
+    'schema field' => 'modified_uid',
+  );
+  $properties['created_date'] = array(
+    'label' => t('Date created'),
+    'type' => 'date',
+    'description' => t('The date the event was posted.'),
+    'schema field' => 'created_date',
+  );
+  $properties['modified_date'] = array(
+    'label' => t('Date changed'),
+    'type' => 'date',
+    'description' => t('The date the event was most recently updated.'),
+    'schema field' => 'modified_date',
+  );
+}
+
+/*
+ * Calendar Event API
+ */
+
+/**
+ * Access callback for event
+ */
+function rec_event_access($op, $event, $account = NULL, $entity_type = NULL) {
+  global $user;
+
+  if (!isset($account)) {
+    $account = $user;
+  }
+  switch ($op) {
+    case 'create':
+      return user_access('create rec_event entities', $account);
+    case 'view':
+      return user_access('view rec_event entities', $account);
+    case 'edit':
+      return user_access('edit any rec_event entities')
+          || (user_access('edit own rec_event entities') && ($event->uid == $account->uid));
+  }
+}
+
+/**
+ * Load a event
+ */
+function rec_event_load($event_id, $reset = FALSE) {
+  $events = rec_event_load_multiple(array($event_id), array(), $reset);
+  return reset($events);
+}
+
+/**
+ * Load multiple events based on certain conditions
+ */
+function rec_event_load_multiple($event_ids = array(), $conditions = array(), $reset = FALSE) {
+  return entity_load('rec_event', $event_ids, $conditions, $reset);
+}
+
+/**
+ * Create event
+ */
+function rec_event_create($values) {
+  return entity_create('rec_event', $values);
+}
+
+/**
+ * Save event
+ */
+function rec_event_save($event) {
+  entity_save('rec_event', $event);
+}
+
+/**
+ * Delete single event
+ */
+function rec_event_delete($event) {
+  entity_delete('rec_event', entity_id('rec_event' ,$event));
+}
+
+/**
+ * Delete multiple events
+ */
+function rec_event_delete_multiple($event_ids) {
+  entity_delete_multiple('rec_event', $event_ids);
+}
+
+/*
+ * Calendar Event Type API
+ */
+  
+/**
+ * Access callback for event type
+ */
+function rec_event_type_access($op, $entity = NULL) {
+  return user_access('administer rec_event types');
+}
+
+/**
+ * Load event type
+ */
+function rec_event_type_load($event_type) {
+  return rec_event_types($event_type);
+}
+
+/**
+ * List of event types
+ */
+function rec_event_types($type_name = NULL) {
+  $types = entity_load_multiple_by_name('rec_event_type', isset($type_name) ? array($type_name) : FALSE);
+  return isset($type_name) ? reset($types) : $types;
+}
+
+/**
+ * Save event type entity
+ */
+function rec_event_type_save($event_type) {
+  entity_save('rec_event_type', $event_type);
+}
+
+/**
+ * Delete single case type
+ */
+function rec_event_type_delete($event_type) {
+  entity_delete('rec_event_type', entity_id('rec_event_type' ,$event_type));
+}
+
+/**
+ * Delete multiple case types
+ */
+function rec_event_type_delete_multiple($event_type_ids) {
+  entity_delete_multiple('rec_event_type', $event_type_ids);
+}
+
+/**
+  * Implements hook_views_api()
+  */
+function rec_event_views_api() {
+  return array(
+    'api' => 3,
+    'path' => drupal_get_path('module', 'rec_event'),
+  );
+}
+
+/*
+ * Specific API functions
+ */
+
+/**
+ * Implements hook_field_extra_fields()
+ * 
+ * Set all extra fields defined by the entity so user can fine-tune.
+ * Fields are distinguished in 'display' and 'form' for each bundle.
+ * 
+ * For extended field options (label etc) a proper Field API field is needed.
+ * 
+ * @see RecEventController::buildContent()
+ * @see http://www.vdmi.nl/blog/attach-extra-or-pseudo-fields-any-entity-drupal
+ * @see https://api.drupal.org/api/drupal/modules!field!field.api.php/function/hook_field_extra_fields/7
+ * @see https://api.drupal.org/api/drupal/modules%21node%21node.module/function/node_field_extra_fields/7
+ * @see https://api.drupal.org/api/drupal/modules%21poll%21poll.module/function/poll_field_extra_fields/7
+ * @see http://drupal.stackexchange.com/questions/28883/how-to-implement-field-formatters-for-entity-properties * 
+ * 
+ * @return array $extra
+ */
+function rec_event_field_extra_fields() {
+  $extra = array();
+  foreach (rec_event_types() as $type) {
+    $extra['rec_event'][$type->type] = array(
+      'form' => array(
+        'title' => array(
+          'label' => t('Name'),
+          'weight' => -1,
+        ),
+        'description' => array(
+          'label' => t('Description'),
+          'weight' => 0,
+        ),
+        'recurrence' => array(
+          'label' => t('Event Recurrence'),
+          'weight' => 10,
+        ),
+      ),
+      'display' => array(
+        'description' => array(
+          'label' => t('Description'),
+          'description' => t('Description'),
+          'weight' => 0,
+        ),
+        'recurrence' => array(
+          'label' => t('Event Recurrence'),
+          'description' => t('Event Recurrence'),
+          'weight' => 9,
+        ),
+        'author' => array(
+          'label' => t('Created by'),
+          'description' => t('Created by'),
+          'weight' => 10,
+        ),
+        'modifier' => array(
+          'label' => t('Modified by'),
+          'description' => t('Modified by'),
+          'weight' => 11,
+        ),
+        'created_date' => array(
+          'label' => t('Create date'),
+          'description' => t('Create date'),
+          'weight' => 12,
+        ),
+        'modified_date' => array(
+          'label' => t('Modify date'),
+          'description' => t('Modify date'),
+          'weight' => 13,
+        ),
+        'revision' => array(
+          'label' => t('Revision'),
+          'description' => t('Revision'),
+          'weight' => 14,
+        ),
+      ),
+    );
+  }
+  return $extra;
+}
+
+/**
+ * Create fields
+ */
+function rec_event_create_fields() {
+  if (module_exists('entityreference')) {
+    if (is_null(field_info_field('node_reference'))) {
+      $field = array(
+        'field_name' => 'node_reference',
+        'type' => 'entityreference',
+        'module' => 'entityreference',
+        'cardinality' => 1,
+        'settings' => array(
+          'target_type' => 'node',
+          'handler' => 'base',
+          'handler_settings' => array(
+            'target_bundles' => array(),
+            'sort' => array(
+              'type' => 'property',
+              'property' => 'title',
+              'direction' => 'ASC',
+            ),
+          ),
+        ),
+      );
+      field_create_field($field);
+    }
+  }
+  if (is_null(field_info_field('event_date'))) {
+    $field = array(
+      'field_name' => 'event_date',
+      'type' => 'datetime',
+      'module' => 'date',
+      'cardinality' => 1,
+      'settings' => array(
+        'granularity' => array(
+          'month' => 'month',
+          'day' => 'day',
+          'hour' => 'hour',
+          'minute' => 'minute',
+          'year' => 'year',
+          'second' => 0,
+        ),
+        //'tz_handling' => 'site',
+        // @todo set globally by bundle
+        'tz_handling' => 'none',
+        'timezone_db' => 'UTC',
+        'cache_enabled' => 0,
+        'cache_count' => '4',
+        'todate' => 'required',
+      ),
+    );
+    field_create_field($field);
+  }
+}
+
+/**
+ * Create field instances
+ * 
+ * @param string $type
+ */
+function rec_event_create_field_instances($type) {
+  rec_event_create_fields();
+  if (module_exists('entityreference')) {
+    if (is_null(field_info_instance('rec_event', 'node_reference', $type))) {
+      $instance = array(
+        'field_name' => 'node_reference',
+        'entity_type' => 'rec_event',
+        'label' => t('Node Reference'),
+        'bundle' => $type,
+        'widget' => array(
+          'module' => 'options',
+          'type' => 'options_select',
+          'weight' => '1',
+          'active' => 1,
+        ),
+        'display' => array(
+          'settings' => array('link' => 1),
+        ),
+        'description' => t('Specify a node to relate to the event. ' .
+          'If no title has been specified above, ' .
+          'it is provided by the node title.'),
+      );
+      field_create_instance($instance);
+    }
+  }
+  if (is_null(field_info_instance('rec_event', 'event_date', $type))) {
+    $instance = array(
+      'field_name' => 'event_date',
+      'entity_type' => 'rec_event',
+      'label' => t('Event Date'),
+      'bundle' => $type,
+      'settings' => array(
+        'default_value' => 'now',
+        'default_value_code' => '',
+        'default_value2' => 'strtotime',
+        'default_value_code2' => '+1 hour',
+      ),
+      'widget' => array(
+        'module' => 'date',
+        'type' => 'date_popup',
+        'weight' => '2',
+        'settings' => array(
+          'input_format' => 'd/m/Y - H:i:s',
+          'input_format_custom' => '',
+          'year_range' => '-3:+3',
+          'increment' => '30',
+          'display_all_day' => 1,
+        ),
+      ),
+      'required' => TRUE,
+      //'description' => '',
+    );
+    field_create_instance($instance);
+  }
+}
+
+/*
+ * AUX functions
+ */
+
+/**
+ * Get recurrence types
+ * 
+ * @return array: recurrence types
+ */
+function _rec_event_recurrence_types() {
+  return array(
+    t('None'),
+    t('Daily'),
+    t('Weekly'),
+    t('Monthly'),
+    t('Yearly'),
+  );
+}
+
+/**
+ * Get days of week
+ * 
+ * Date API date_week_days() returns Sun as first day
+ * Key should not be 0 for checkboxes values to work
+ * 
+ * @return array: days
+ */
+function rec_event_days() {
+  return array(
+    1 => t('Monday'),
+    2 => t('Tuesday'),
+    3 => t('Wednesday'),
+    4 => t('Thursday'),
+    5 => t('Friday'),
+    6 => t('Saturday'),
+    7 => t('Sunday'),
+  );
+}
+
+/**
+ * Get next date for a specified date, month and year
+ * 
+ * @see http://www.php.net/manual/en/datetime.setdate.php
+ *
+ * @param int $recurrence_at_date
+ * @param int $month
+ * @param int $year
+ * @param string $time
+ * @return DateObject $date_pos
+ */
+function rec_event_get_date_for_month_year($recurrence_at_date, $month, $year, $time = '') {
+  $year += intval($month / 12);
+  $month = $month % 12;
+  if ($recurrence_at_date == 31) { // first working day
+    $date_pos = new DateObject($year . '/' . $month . '/1 ' . $time, new DateTimeZone('UTC'));
+    while (intval($date_pos->format('N')) > 5) 
+      $date_pos->add(new DateInterval('P1D'));
+  }
+  if ($recurrence_at_date > 31) { // last day or last working day
+    $day = date_days_in_month($year, $month);
+    $date_pos = new DateObject($year . '/' . $month . '/' . $day . ' ' . $time, new DateTimeZone('UTC'));
+    if ($recurrence_at_date == 32) { // last working day
+      while (intval($date_pos->format('N')) > 5) 
+        $date_pos->sub(new DateInterval('P1D'));
+    }
+  }
+  else {
+    $day = $recurrence_at_date + 1;
+    $date_pos = new DateObject($year . '/' . $month . '/' . $day . ' ' . $time, new DateTimeZone('UTC'));
+  }
+  return $date_pos;
+}
+
+/*
+ * Other API functions
+ */
+
+/**
+ * Batch operation for publish
+ *
+ * Copy event values for $event_id to $bundle_to type.
+ *
+ * @param int $event_id
+ * @param int $publish_id
+ * @param int $count
+ * @param string $to_type
+ * @param array $context
+ */
+function rec_event_publish_process($event_id, $publish_id, $count, 
+    $to_type, &$context) 
+{
+  if (empty($context['sandbox'])) {
+    $context['sandbox'] = array();
+    $context['sandbox']['progress'] = 0;
+    $context['sandbox']['current'] = 0;
+    $context['sandbox']['max'] = $count;
+  }
+  $context['results'][] = 
+    rec_event_publish($event_id, $publish_id, $to_type);
+  $context['sandbox']['progress']++;
+  $context['sandbox']['current'] = $event_id;
+}
+
+/**
+ * Batch finished callback for publish
+ * 
+ * @param bool $success
+ * @param array $results
+ * @param array $operations
+ */
+function rec_event_publish_finished($success, $results, $operations) {
+  if ($success) {
+    // get the first op
+    $op = reset($operations);
+    // get the maximum revision number and clear all remaining
+    // thus assuring that only the last published events remain
+    /*
+    SELECT MAX(revision) AS max_revision
+    FROM rec_event
+    WHERE type='working'*/    
+    $query = db_select('rec_event', 'e');
+    $query->addExpression('MAX(revision)', 'max_revision');
+    // $op[1][3] is op's argument: bundle
+    $query->condition('type', $op[1][3]);
+    $max_revision = $query
+      ->execute()
+      ->fetchField();
+    // get all ids that are not this revision
+    if (!is_null($max_revision)) {
+      /*SELECT event_id
+      FROM rec_event
+      WHERE revision < 5*/
+      $query = db_select('rec_event', 'e');
+      $query
+        ->fields('e', array('event_id'))
+        ->condition('revision', $max_revision, '<');
+      $ids = $query
+        ->execute()
+        ->fetchCol();
+      // delete them
+      register_shutdown_function('rec_event_delete_multiple', $ids);
+    }
+    drupal_set_message(t('Calendar published. %count events processed.', 
+        array('%count' => count($results))));
+  }
+  else {
+    $error_operation = reset($operations);
+    drupal_set_message(t('An error occurred while processing event %id.', 
+        array('%id' => $error_operation[1][0])));
+  }
+}
+
+/**
+ * Copy an event to a new with published type
+ *
+ * @param int $event_id
+ * @param int $publish_id
+ * @param string $to_type
+ * @return bool
+ */
+function rec_event_publish($event_id, $publish_id, $to_type) {
+  // get event by ref
+  $working = rec_event_load($event_id);
+  if (!is_null($publish_id)) $publish = rec_event_load($publish_id);
+  else $publish = rec_event_create(array('type' => $to_type));
+  RecEventController::copy($working, $publish);
+  $publish->ref_event_id = $event_id;
+  $wrapper_working = entity_metadata_wrapper('rec_event', $working);
+  $wrapper_publish = entity_metadata_wrapper('rec_event', $publish);
+  RecEventController::copyFields($wrapper_working, $wrapper_publish);
+  $wrapper_publish->save();
+  return TRUE;
+}
+
+/**
+ * Implement hook_fullcalendar_classes()
+ *
+ * Provide additional classes for theming purposes
+ * @see https://drupal.org/node/1237784
+ * @see http://drupalcontrib.org/api/drupal/contributions!fullcalendar!fullcalendar.api.php/function/hook_fullcalendar_classes/7
+ * @see http://stackoverflow.com/questions/7104262/i-cant-seem-to-override-a-function-using-template-php
+ * @see https://drupal.org/node/1163220
+ *
+ * @param $entity
+ * @return string
+ */
+function rec_event_fullcalendar_classes($entity) {
+  if (!isset($entity->node_reference)) return;
+  if (!isset($entity->node_reference['und'][0]['target_id'])) return;
+  $nid = $entity->node_reference['und'][0]['target_id'];
+  $alias = drupal_get_path_alias("node/$nid");
+  // replace all / with --
+  return 'fc-event-ref-' . preg_replace('/\//', '--', $alias);
+}

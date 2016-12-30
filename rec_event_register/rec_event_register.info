@@ -1,0 +1,11 @@
+name = Recurring Event Registration
+description = Handles registrations for recurring events.
+;package = 
+core = 7.x
+
+configure = admin/config/date/rec_event_register
+
+dependencies[] = rec_event
+dependencies[] = entityreference
+
+files[] = rec_event_register_form.inc

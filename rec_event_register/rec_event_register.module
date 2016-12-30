@@ -1,0 +1,812 @@
+<?php
+/**
+ * @file
+ *   Recurring Event Registration module file
+ * 
+ * @author
+ *   gkarak@forecasting.gr
+ *   
+ * @copyright
+ *   (c) 2014 George Karakostas
+ * 
+ * @license
+ *   GPLv2
+ * 
+ * @abstract
+ *   The module is provides registration support for Recurring Event entities. 
+ */
+
+/**
+ * Implements hook_help.
+
+ * @param $path
+ * @param $arg
+ * @return string
+ */
+function rec_event_register_help($path, $arg) {
+  switch ($path) {
+    case 'admin/help#rec_event_register':
+      return '<p>'.  
+        t('Provides support for Recurring Events user registration.') .
+        '</p>';
+      break;
+  }
+}
+
+/**
+ * Implements hook_permission()
+ * 
+ * @return array
+ */
+function rec_event_register_permission() {
+  return array(
+    'administer rec_event_register' => array(
+      'title' => t('Administer recurring events registration'),
+      'description' => t('Allow users to administer registration settings for recurring events.'),
+    ),
+    'access others rec_event_register' => array(
+      'title' => t('Access other users\' recurring events registration'),
+      'description' => t('Allow users to access the registration form of recurring events for other users.'),
+    ),
+    'register rec_event_register' => array(
+      'title' => t('Register on recurring events'),
+      'description' => 
+        t('Allow users to register themselves on recurring events.') .'&nbsp;'. 
+        t('<em>Warning:</em> Users with the <em>Edit events</em> permission can overcome this rule.'),
+    ),
+    'unregister rec_event_register' => array(
+      'title' => t('Unregister from recurring events'),
+      'description' => 
+        t('Allow users to unregister themselves from recurring events.') .'&nbsp;'. 
+        t('<em>Warning:</em> Users with the <em>Edit events</em> permission can overcome this rule.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu()
+ * 
+ * @return array
+ */
+function rec_event_register_menu() {
+  $items = array();
+  $items['admin/config/date/rec_event_register'] = array(
+    'title' => 'Recurring events registration',
+    'description' => t('Administer registration settings for recurring events.'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('rec_event_register_admin_form'),
+    'access arguments' => array('administer rec_event_register'),
+    'file' => 'rec_event_register_admin_form.inc',
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $uri = 'event/%rec_event';
+  $uri_pos = 1;
+  // Enable to present a tab next to Event View, Edit
+  /*$items[$uri . '/register'] = array(
+    'title' => 'Register event',
+    'description' => t('Register event'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('rec_event_register_form', $uri_pos),
+    'access arguments' => array('register rec_event_register'),
+    'type' => MENU_LOCAL_TASK,
+  );*/
+  $items[$uri . '/register/%user'] = array(
+    'title' => 'Register event',
+    'description' => t('Register event'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('rec_event_register_form', $uri_pos, 3),
+    'access arguments' => array('access others rec_event_register'),
+  );
+  $items['event/register/autocomplete'] = array(
+    'title' => 'Autocomplete for users',
+    'page callback' => 'rec_event_register_autocomplete',
+    'access arguments' => array('access user profiles'),
+    'file' => 'rec_event_register_autocomplete.inc',
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * Create mandatory fields: event_user_ref
+ */
+function rec_event_register_create_fields() {
+  if (is_null(field_info_field('event_user_ref'))) {
+    $field = array(
+      'field_name' => 'event_user_ref',
+      'type' => 'entityreference',
+      'module' => 'entityreference',
+      'cardinality' => FIELD_CARDINALITY_UNLIMITED,
+      'settings' => array(
+        'target_type' => 'user',
+        'handler' => 'base',
+        'handler_settings' => array(
+          'target_bundles' => array(),
+          'sort' => array('type' => 'none'),
+        ),
+      ),
+    );
+    field_create_field($field);
+  }
+}
+
+/**
+ * Create mandatory field instances: event_user_ref
+ * 
+ * @param string $type
+ */
+function rec_event_register_create_field_instances($type) {
+  rec_event_register_create_fields();
+  if (is_null(field_info_instance('rec_event', 'event_user_ref', $type))) {
+    $instance = array(
+      'field_name' => 'event_user_ref',
+      'entity_type' => 'rec_event',
+      'label' => t('Registered users'),
+      'bundle' => $type,
+      'widget' => array(
+        'module' => 'entityreference',
+        'type' => 'entityreference_autocomplete_tags',
+        'weight' => '3',
+        'settings' => array(
+          'match_operator' => 'CONTAINS',
+          'size' => 60,
+          'path' => '',
+        ),
+      ),
+      'display' => array(
+        // hide because shows only current user, not all
+        'type' => array('hidden'),
+        //'settings' => array('link' => 1),
+      ),
+      'description' => t('Specify users registered to the event.'),
+    );
+    field_create_instance($instance);
+  }
+}
+
+/**
+ * Create capacity fields
+ */
+function rec_event_register_create_field_capacity() {
+  if (is_null(field_info_field('field_capacity'))) {
+    $field = array(
+      'field_name' => 'field_capacity',
+      'type' => 'number_integer',
+      'module' => 'number',
+      'cardinality' => 1,
+    );
+    field_create_field($field);
+  }
+}
+
+/**
+ * Create capacity field instances
+ *
+ * @param string $type
+ */
+function rec_event_register_create_field_capacity_instances($type) {
+  rec_event_register_create_field_capacity();
+  if (is_null(field_info_instance('node', 'field_capacity', $type))) {
+    $instance = array(
+      'field_name' => 'field_capacity',
+      'entity_type' => 'node',
+      'label' => t('Capacity'),
+      'bundle' => $type,
+      'widget' => array(
+        'module' => 'number',
+        'type' => 'number',
+      ),
+      'display' => array(
+        'type' => array('hidden'),
+      ),
+      'description' => t('Specify user capacity for event registration.'),
+    );
+    field_create_instance($instance);
+  }
+}
+
+/**
+ * Create slot reservation fields
+ */
+function rec_event_register_create_field_slot() {
+  if (is_null(field_info_field('slot_reservation'))) {
+    $field = array(
+      'field_name' => 'slot_reservation',
+      'type' => 'number_integer',
+      'module' => 'number',
+      'cardinality' => FIELD_CARDINALITY_UNLIMITED,
+    );
+    field_create_field($field);
+  }
+}
+
+/**
+ * Create slot reservation field instances
+ *
+ * @param string $type
+ */
+function rec_event_register_create_field_slot_instances($type) {
+  rec_event_register_create_field_slot();
+  if (is_null(field_info_instance('node', 'slot_reservation', $type))) {
+    $instance = array(
+      'field_name' => 'slot_reservation',
+      'entity_type' => 'rec_event',
+      'label' => t('Slot reservations'),
+      'bundle' => $type,
+      'widget' => array(
+        'module' => 'number',
+        'type' => 'number',
+      ),
+      'display' => array(
+        'type' => array('hidden'),
+      ),
+      'description' => t('Specify the slot numbers that each user has booked at by order. Use 0 for none specific.'),
+    );
+    field_create_instance($instance);
+  }
+}
+
+/**
+ * Create with_slots fields
+ */
+function rec_event_register_create_field_with_slots() {
+  if (is_null(field_info_field('field_with_slot_reservations'))) {
+    $field = array(
+      'field_name' => 'field_with_slot_reservations',
+      'type' => 'list_boolean',
+      'module' => 'list',
+      'cardinality' => 1,
+      'settings' => array(
+        'allowed_values' => array('', ''),
+      ),
+    );
+    field_create_field($field);
+  }
+}
+
+/**
+ * Create with_slots field instances
+ *
+ * @param string $type
+ */
+function rec_event_register_create_field_with_slots_instances($type) {
+  rec_event_register_create_field_with_slots();
+  if (is_null(field_info_instance('node', 'field_with_slot_reservations', $type))) {
+    $instance = array(
+      'field_name' => 'field_with_slot_reservations',
+      'entity_type' => 'node',
+      'label' => t('With slot reservations'),
+      'bundle' => $type,
+      'widget' => array(
+        'module' => 'options',
+        'type' => 'options_onoff',
+      ),
+      'display' => array(
+        'type' => array('hidden'),
+      ),
+      'description' => t('Specify whether event registration is slot-based.'),
+    );
+    field_create_instance($instance);
+  }
+}
+
+/**
+ * Implements hook_block_info()
+ * 
+ * Present a block with the registration form
+ * Menu item for the form is callback
+ * 
+ * Futher options in block config may be presented
+ * in form using hook_block_config() and hook_block_save() 
+ * @see https://api.drupal.org/api/drupal/modules%21block%21block.api.php/function/hook_block_info/7
+ * 
+ * @return array $blocks
+ */
+function rec_event_register_block_info() {
+  $blocks['rec_event_register'] = array(
+      'info' => t('Event registration form block'),
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view()
+ * 
+ * @param string $delta Which block to render
+ * @return array $block
+ */
+function rec_event_register_block_view($delta = '') {
+  $block = array();
+  if ($delta == 'rec_event_register') {
+    // uri is expected /event/$id
+    $uri_pos = 1;
+    $uri = explode('/', request_uri());
+    // don't show if on register confirmation page
+    if ((count($uri) == 5) && $uri[3] == 'register') return $block;
+    // load event
+    if (!isset($uri[$uri_pos + 1])) $event = NULL;
+    else $event = rec_event_load($uri[$uri_pos + 1]);
+    // if not a valid id or if not exists we get false
+    if (!$event) return $block;
+    // if no user registration field then show nothing
+    if (!isset($event->event_user_ref)) return $block;
+    // determine if user is registered
+    global $user;
+    // if no access then show nothing
+    if (!user_access('administer rec_event_register')) {
+      $registered = _rec_event_register_form_is_registered($event, $user);
+      if (!user_access('register rec_event_register') &&
+          !user_access('unregister rec_event_register'))
+      {
+        $block = array(
+          'subject' => t('Register event'),
+          'content' => array(
+            '#markup' =>
+              t('<a href="/user/login">Login</a> or <a href="/user/register">register</a> on the site to register to this event.'),
+          ),
+        );
+        return $block;
+      }
+      if (!user_access('register rec_event_register') && ($registered < 0)) {
+        return $block;
+      }
+      if (!user_access('unregister rec_event_register') && ($registered >= 0)) {
+        return $block;
+      }
+    }
+    $block = array(
+      'subject' => t('Register event'),
+      'content' => drupal_get_form('rec_event_register_form', $event),
+    );
+  }
+  return $block;
+}
+
+/**
+ * Generates the registration form.
+ *
+ * @param $form
+ * @param $form_state
+ * @param $event
+ * @param $user_uri
+ * @return $form
+ */
+function rec_event_register_form($form, &$form_state, $event, $user_uri = NULL) {
+  if (!is_object($event)) $event = rec_event_load($event);
+  if (!$event) return $form;
+  $form_state['event'] = $event;
+  $form['#prefix'] = '<div id="rec_event_register_form_ajax_user">';
+  $form['#suffix'] = '</div>';
+  $user = FALSE;
+  // a user is specified by url, present textbox
+  // permission is controlled by hook_menu
+  //if (isset($form_state['values']['name']))
+  //  debug($form_state['values']['name']);
+  if (!is_null($user_uri)) {
+    // keep the initial variable otherwise bug
+    $user = $user_uri;
+    // $user is loaded using the auto-loader wildcard of hook_menu
+    $form['user'] = array(
+      '#type' => 'textfield',
+      '#title' => t('User'),
+      '#size' => 30,
+      '#maxlength' => 60,
+      '#required' => TRUE,
+      '#weight' => -1,
+      '#disabled' => TRUE,
+      '#value' => $user->name,
+    );
+  }
+  // else current user is administrator, present autocomplete textbox
+  elseif (user_access('administer rec_event_register')) {
+    $form['user'] = array(
+      '#type' => 'textfield',
+      '#title' => t('User'),
+      '#size' => 30,
+      '#maxlength' => 60,
+      '#required' => TRUE,
+      //'#autocomplete_path' => 'user/autocomplete',
+      '#autocomplete_path' => 'event/register/autocomplete',
+      '#weight' => -1,
+      '#ajax' => array(
+        'callback' => 'rec_event_register_form_ajax_user',
+        'wrapper' => 'rec_event_register_form_ajax_user',
+      ),
+      //'#default_value' => is_null($user_uri)? '': $user_uri->name,
+      //'#disabled' => !is_null($user_uri),
+      // no, will use a separate textfield; otherwise don't forget to set $user
+    );
+    // ajax: set user description
+    if (isset($form_state['values']) && !empty($form_state['values']['user'])) {
+      $user = user_load_by_name($form_state['values']['user']);
+      if ($user) {
+        $form['user']['#description'] =
+          l($user->field_name['und'][0]['given'] . ' ' .
+            $user->field_name['und'][0]['family'] . ' (' .
+            $user->init . ')',
+            'user/' . $user->uid,
+            array(
+              'attributes' => array('target' => '_blank'),
+            ));
+        if (module_exists('userpoints')) {
+          $form['user']['#description'] .=
+            _rec_event_register_form_userpoints($user, 'all', t('Balance'));
+          foreach (userpoints_get_categories() as $tid => $cat) {
+            $form['user']['#description'] .=
+              _rec_event_register_form_userpoints($user, $tid, $cat);
+          }
+        }
+      }
+    }
+  }
+  else {
+    // using hidden type (#access property as that would exclude value too).
+    global $user;
+    $form['user'] = array(
+      '#type' => 'hidden',
+      '#value' => $user->name,
+    );
+  }
+  $registered = _rec_event_register_form_is_registered($event, $user);
+  $form_state['registered'] = $registered;
+  // setup form default variables
+  $disabled = FALSE;
+  $description = '';
+  // setup event date variables
+  $wrapper = entity_metadata_wrapper('rec_event', $event);
+  $date = $wrapper->event_date->value();
+  $reg_start = new DateObject($date['value']);
+  $reg_start->sub(date_interval_create_from_date_string(
+      variable_get('rec_event_register_start', '1 week')));
+  $reg_end = new DateObject($date['value']);
+  // if via /u/ url, then allow registration after last minute
+  // checked if simple registered user can override this with uri and it is ok
+  if (is_null($user_uri)) {
+    $reg_end->sub(date_interval_create_from_date_string(
+        variable_get('rec_event_register_end', '1 hour')));
+  }
+  // otherwise allow after rec_event_register_end (add)
+  // possibly use different setting
+  else {
+    $reg_end->add(date_interval_create_from_date_string(
+      variable_get('rec_event_register_end', '1 hour')));
+  }
+  $now = new DateObject('now');
+  // check if too soon
+  if ($now < $reg_start) {
+    $description = t('Registration opens at @date', 
+        array('@date' => $reg_start->format('d M H:i')));
+    $disabled = TRUE;
+  }
+  // check if too late
+  if ($now > $reg_end) {
+    $description = t('Registration last call at @date', 
+        array('@date' => $reg_end->format('d M H:i')));
+    $disabled = TRUE;
+  }
+  // Capacities
+  if (isset($event->node_reference) &&
+    !empty($event->node_reference['und'][0]['target_id']))
+  {
+    $node = node_load($event->node_reference['und'][0]['target_id']);
+    if (isset($node->field_capacity) &&
+      !empty($node->field_capacity['und'][0]['value']))
+    {
+      $capacity = $node->field_capacity['und'][0]['value'];
+      $count = 0;
+      if (isset($event->event_user_ref['und']))
+        $count = count($event->event_user_ref['und']);
+      if ($count >= $capacity) {
+        // if not registered then disable otherwise allow cancel
+        if ($registered < 0) {
+          $description .= '<br /><span class="points-red">' .
+            t('The event is fully registered.');
+          if (!user_access('administer rec_event_register'))
+            $description .= ' ' . t('For further details please use the <a href="/contact">contact form</a>.');
+          $description .= '</span>';
+          $disabled = TRUE;
+        }
+      }
+      // @todo variable in admin
+      elseif (!$disabled && $count >= ($capacity * 0.75)) {
+        $description .= '<br /><span class="points-0">' .
+          t('Limited reservation availability!') . '</span>';
+      }
+      elseif (!$disabled) {
+        $description .= '<br /><span class="points-green">' .
+          t('There is still reservation availability.') . '</span>';
+      }
+      if (user_access('administer rec_event_register')) {
+        $description .= '<br />' . t('Reservation info: %count / %capacity.',
+          array(
+            '%count' => $count,
+            '%capacity' => $capacity,
+          ));
+      }
+      // Present slot reservations
+      // display only if capacity defined (checked already)
+      // and if with slot is yes
+      if (isset($node->field_with_slot_reservations) &&
+        !empty($node->field_with_slot_reservations['und'][0]['value']))
+      {
+        $form['slots'] = array(
+          '#type' => 'radios',
+          '#title' => t('Seats'),
+          '#options' => array(),
+          //'#default_value' => 2,
+        );
+        // build an array with pairs, user => seat?
+        // @see https://www.drupal.org/node/1021556
+        $seat_users = array();
+        foreach ($wrapper->slot_reservation->value() as $key => $val) {
+          if (isset($wrapper->event_user_ref[$key])) {
+            $seat_users[$val] = $wrapper->event_user_ref[$key]->value();
+            if (isset($user->uid) && ($seat_users[$val]->uid == $user->uid)) {
+              $form['slots']['#default_value'] = $val;
+              // for ajax
+              // @see http://drupal.stackexchange.com/a/128635/17649
+              unset($form_state['input']['slots']);
+            }
+          }
+          else $seat_users[$val] = NULL;
+        }
+        // @todo in future allow named seats via another field
+        // @see http://drupal.stackexchange.com/questions/832/how-can-i-disable-a-single-checkbox-in-a-checkboxes-fapi-element
+        for ($i = 1; $i <= $capacity; $i++) {
+          $form['slots']['#options'][$i] = $i;
+          if (isset($seat_users[$i])) {
+            $form['slots'][$i]['#disabled'] = TRUE;
+            // present name and picture
+            $picture = '';
+            $image_style = variable_get('rec_event_register_image_style', '');
+            if (in_array($image_style, array_keys(image_styles())) &&
+              (isset($seat_users[$i]->picture)))
+            {
+              $picture = theme_image_style(array(
+                'style_name' => $image_style,
+                'path' => $seat_users[$i]->picture->uri,
+                'alt' => 'User: ' . $seat_users[$i]->name,
+                'width' => NULL,
+                'height' => NULL,
+              ));
+            }
+            $link = $seat_users[$i]->name;
+            // if admin then link to user profile
+            if (user_access('administer rec_event_register')) {
+              $link = l($seat_users[$i]->name, 'user/' . $seat_users[$i]->uid);
+              if ($picture) {
+                $picture = l($picture, 'user/' . $seat_users[$i]->uid,
+                  array('html' => TRUE));
+              }
+            }
+            // else link to user's url, if any
+            elseif (isset($seat_users[$i]->field_web_site) &&
+                    isset($seat_users[$i]->field_web_site['und'][0])) {
+              $user_site = $seat_users[$i]->field_web_site['und'][0];
+              $link = l($seat_users[$i]->name, $user_site['url'], array(
+                  'attributes' => $user_site['attributes'] + array(
+                    'target' => '_blank',
+                  )));
+              if ($picture) {
+                $picture = l($picture, $user_site['url'], array(
+                  'attributes' => $user_site['attributes'] + array(
+                      'target' => '_blank',
+                    ),
+                  'html' => TRUE,
+                ));
+              }
+            }
+            $form['slots']['#options'][$i] .=
+              '<div class="label-username">' .$link . '</div>';
+            $form['slots']['#options'][$i] .=
+              '<div class="label-picture">' . $picture . '</div>';
+            //$form['slots']['#options'][$i] .=
+              //theme('user_picture', array('account' => $seat_users[$i]));
+          }
+        }
+      }
+    }
+  }
+  // provide additional instruction
+  if (!user_access('administer rec_event_register')) {
+    if (!$disabled && ($registered < 0) && !$description)
+      $description = t('Click the button below to register to event.');
+    elseif (!$disabled && ($registered >= 0) && !$description)
+      $description = t('You are registered to the event.');
+    elseif ($disabled && ($registered >= 0) && $description)
+      $description .= '<br />' . t('You are registered to the event.');
+  }
+  if ($description) {
+    $form['description'] = array(
+        '#markup' => '<p>' . $description . '</p>',
+    );
+  }
+  // BUTTON
+  $form['actions'] = array('#type' => 'actions');
+  $button_state = $disabled && !user_access('administer rec_event_register');
+  $form['actions']['submit'] = array(
+      '#type' => 'submit',
+      '#value' => ($registered >= 0)? 
+          ($button_state? t('Registered'): t('Unregister event')):
+          t('Register event'),
+      '#disabled' => $button_state,
+  );
+  return $form;
+}
+
+/**
+ * Helper function that tells if a user is registered to an event
+ *
+ * @param $event
+ * @param $user
+ * @return int
+ */
+function _rec_event_register_form_is_registered($event, $user) {
+  $registered = -1;
+  if (!$event || !$user) return $registered;
+  // expected value: $event->event_user_ref['und'][0]['target_id'] = $user_id
+  foreach ($event->event_user_ref as $ref_lang) {
+    foreach ($ref_lang as $key => $ref) {
+      if ($ref['target_id'] == $user->uid) {
+        $registered = $key;
+      }
+    }
+  }
+  return $registered;
+}
+
+/**
+ * Helper function that presents userpoints balance
+ *
+ * @param $user
+ * @param $tid
+ * @param $cat
+ * @return string
+ */
+function _rec_event_register_form_userpoints($user, $tid, $cat) {
+  $bal = userpoints_get_current_points($user->uid, $tid);
+  //if (!$tid && !$bal) return '';
+  $class = 'points-0';
+  if ($bal > 0) $class = 'points-green';
+  elseif ($bal < 0) $class= 'points-red';
+  return '<br/ >' . '<span class="points-bal ' . $class . ' tid-' . $tid .
+    '"><span class="cat">' . $cat .
+    ':</span> <span class="bal">' . $bal . '</span></span>';
+}
+
+/**
+ * Ajax callback for node_reference field
+ *
+ * @param array $form
+ * @param array $form_state
+ * @return array
+ */
+function rec_event_register_form_ajax_user($form, $form_state) {
+  return $form;
+}
+
+/**
+ * Form validate handler
+ *
+ * @param array $form
+ * @param array $form_state
+ */
+function rec_event_register_form_validate($form, &$form_state) {
+  // Validate only for submit button
+  if (isset($form_state['values']['op']) &&
+    $form_state['values']['op'] != $form_state['values']['submit']) return;
+  // if not found we get false
+  if (!user_load_by_name($form_state['values']['user']))
+    form_set_error('user', t('The specified username does not exist.'));
+}
+
+/**
+ * Submit handler for registration form
+ *
+ * @param array $form
+ * @param array $form_state
+ */
+function rec_event_register_form_submit($form, &$form_state) {
+  $user = user_load_by_name($form_state['values']['user']);
+  $event = $form_state['event'];
+  $registered = $form_state['registered'];
+  $event->recurrence_edit_status = 1;
+  $wrapper = entity_metadata_wrapper('rec_event', $event);
+  // Capacities
+  if (isset($event->node_reference) &&
+    !empty($event->node_reference['und'][0]['target_id']))
+  {
+    $node = node_load($event->node_reference['und'][0]['target_id']);
+    if (isset($node->field_capacity) &&
+      !empty($node->field_capacity['und'][0]['value']))
+    {
+      $capacity = $node->field_capacity['und'][0]['value'];
+      $count = 0;
+      if (isset($event->event_user_ref['und']))
+        $count = count($event->event_user_ref['und']);
+      if (($count >= $capacity) && ($registered < 0) &&
+        !user_access('administer rec_event_register'))
+      {
+        // any messages at this stage won't be processed for some reason
+        return;
+      }
+    }
+  }
+  if ($registered >= 0) {
+    unset($wrapper->event_user_ref[$registered]);
+    unset($wrapper->slot_reservation[$registered]);
+    drupal_set_message(t('Unregistered from %event.',
+        array('%event' => $event->title)));
+    watchdog('rec_event_register', 
+        'User %user got unregistered from event %event with ID %id',
+        array(
+          '%user' => $user->name,
+          '%event' => $event->title,
+          '%id' => $event->event_id,
+        ));
+    $wrapper->save();
+    if (module_exists('rules'))
+      rules_invoke_event('rec_event_register_unregister', $user, $event);
+  }
+  else {
+    if (isset($form['slots'])) {
+      // check if users but no slots
+      while (count($wrapper->event_user_ref) > count($wrapper->slot_reservation))
+        $wrapper->slot_reservation[count($wrapper->slot_reservation)]->set(0);
+      $wrapper->slot_reservation[count($wrapper->slot_reservation)]->
+        set(is_null($form_state['values']['slots'])?
+          0: $form_state['values']['slots']);
+    }
+    $wrapper->event_user_ref[count($wrapper->event_user_ref)]->set($user->uid);
+    drupal_set_message(t('Registered on %event.',
+        array('%event' => $event->title)));
+    watchdog('rec_event_register',
+      'User %user got registered on event %event with ID %id',
+      array(
+        '%user' => $user->name,
+        '%event' => $event->title,
+        '%id' => $event->event_id,
+      ));
+    $wrapper->save();
+    if (module_exists('rules'))
+      rules_invoke_event('rec_event_register_register', $user, $event);
+  }
+}
+
+/**
+ * Implements hook_rules_event_info().
+ *
+ * @return array
+ */
+function rec_event_register_rules_event_info() {
+  return array(
+    'rec_event_register_register' => array(
+      'label' => t('User has registered to event'),
+      'group' => t('Recurring Event'),
+      'variables' => array(
+        'user' => array(
+          'label' => t('The user that has registered'),
+          'type' => 'user',
+        ),
+        'rec_event' => array(
+          'label' => t('The event to which the user has registered'),
+          'type' => 'rec_event',
+        ),
+      ),
+    ),
+    'rec_event_register_unregister' => array(
+      'label' => t('User has unregistered from event'),
+      'group' => t('Recurring Event'),
+      'variables' => array(
+        'user' => array(
+          'label' => t('The user that has unregistered'),
+          'type' => 'user',
+        ),
+        'rec_event' => array(
+          'label' => t('The event from which the user has unregistered'),
+          'type' => 'rec_event',
+        ),
+      ),
+    ),
+  );
+}
